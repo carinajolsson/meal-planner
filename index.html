@@ -1,0 +1,585 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Meal plan</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<!-- Keep this the same as theme_color in manifest.json -->
+<meta name="theme-color" content="#2E7D5B">
+<style>
+  /* Colors: change these per site. */
+  :root {
+    --bg: #E9EFEA;
+    --surface: #F6F9F6;
+    --ink: #1F2D27;
+    --muted: #5F7068;
+    --line: #C9D4CC;
+    --accent: #2E7D5B;
+    --accent-ink: #F2F7F3;
+    --danger: #A6402F;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #131A16;
+      --surface: #1B2420;
+      --ink: #E4ECE6;
+      --muted: #93A59B;
+      --line: #2F3D36;
+      --accent: #5FC294;
+      --accent-ink: #0F1F17;
+      --danger: #E08A78;
+    }
+  }
+
+  /* Shared layout */
+  :root {
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    color-scheme: light dark;
+  }
+  *, *::before, *::after { box-sizing: inherit; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 1rem/1.5 ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  main {
+    max-width: 52rem; min-height: 100%;
+    margin: 0 auto; padding: 1.5rem 1.25rem 2rem;
+    display: flex; flex-direction: column; gap: 2rem;
+  }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+  header h1 { font-size: 1rem; font-weight: 600; margin: 0; }
+  .status { font-size: 0.875rem; color: var(--muted); display: flex; align-items: center; gap: 0.4rem; }
+  .status::before { content: ""; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--line); }
+  .status[data-state="ok"]::before { background: var(--accent); }
+  .status[data-state="busy"]::before { background: var(--muted); animation: pulse 1s infinite alternate; }
+  .status[data-state="error"]::before { background: var(--danger); }
+  @keyframes pulse { to { opacity: 0.3; } }
+
+  .big { font-size: clamp(2.25rem, 11vw, 3.5rem); line-height: 1.05; font-weight: 700; letter-spacing: -0.02em; margin: 0; overflow-wrap: anywhere; }
+  .big.empty { color: var(--muted); font-weight: 500; }
+  .meta, .note { color: var(--muted); font-size: 0.9375rem; margin: 0.75rem 0 0; }
+  .error { color: var(--danger); font-size: 0.9375rem; margin: 0; }
+
+  form { display: flex; flex-direction: column; gap: 0.75rem; }
+  label { font-size: 0.9375rem; color: var(--muted); }
+  input, textarea, select {
+    font: inherit; font-size: 1.125rem; padding: 0.85rem 1rem; width: 100%;
+    border: 1.5px solid var(--line); border-radius: 0.75rem;
+    background: var(--surface); color: var(--ink);
+  }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+  button {
+    font: inherit; font-weight: 600; padding: 0.85rem 1.25rem; cursor: pointer;
+    border: none; border-radius: 0.75rem; background: var(--accent); color: var(--accent-ink);
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.quiet { background: none; color: var(--muted); padding: 0.5rem 0; font-weight: 500; text-decoration: underline; text-underline-offset: 0.2em; }
+  button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .row { display: flex; gap: 1.5rem; }
+  footer { margin-top: auto; }
+  [hidden] { display: none !important; }
+  @media (prefers-reduced-motion: reduce) { .status::before { animation: none !important; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1 id="appTitle">Meal plan</h1>
+    <span class="status" id="status" data-state="idle">Not connected</span>
+  </header>
+
+  <!-- Shared: shown before Dropbox is connected -->
+  <section id="connectView" hidden>
+    <p class="big empty">Connect Dropbox to start</p>
+    <p class="meta">Your data is saved in an app folder in your own Dropbox, so every device you connect sees the same thing.</p>
+    <p style="margin-top:1.5rem"><button id="connectBtn">Connect Dropbox</button></p>
+  </section>
+
+  <!-- ===== YOUR APP: everything inside #appView is yours to replace ===== -->
+  <section id="appView" hidden>
+    <style>
+      .mp { --mp-note: #fff1a8; --mp-note-ink: #5a4a00; --mp-tint: color-mix(in srgb, var(--accent) 10%, transparent); }
+      @media (prefers-color-scheme: dark) { .mp { --mp-note: #4a4114; --mp-note-ink: #ffe98a; } }
+      .mp button { font: inherit; font-weight: 400; color: inherit; cursor: pointer; }
+
+      .mp-tabs { display: flex; gap: .25rem; margin: 0 0 1rem; border-bottom: 1px solid var(--line); }
+      .mp .mp-tab { background: none; border: 0; border-radius: 0; padding: .6rem .9rem; border-bottom: 3px solid transparent; color: var(--muted); font-weight: 600; }
+      .mp .mp-tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+
+      .mp-week { font-size: .85rem; font-weight: 700; color: var(--accent); margin: 1.5rem 0 .4rem; }
+      .mp-week:first-child { margin-top: .25rem; }
+
+      .mp-day { display: grid; grid-template-columns: 4.5rem 1fr 1fr; gap: .5rem; padding: .6rem 0; border-top: 1px solid var(--line); }
+      .mp-date { padding-top: .2rem; }
+      .mp-date b { display: block; font-size: 1.6rem; line-height: 1; font-variant-numeric: tabular-nums; }
+      .mp-date span { font-size: .8rem; color: var(--muted); }
+      .mp-day.is-today .mp-date b { color: var(--accent); }
+      .mp-day.is-weekend { background: linear-gradient(to right, var(--mp-tint), transparent 60%); }
+
+      .mp-slot { display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
+      .mp-slot-label { font-size: .75rem; color: var(--muted); }
+      .mp .mp-meal { text-align: left; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: .6rem; padding: .5rem .6rem; display: flex; flex-direction: column; gap: .2rem; min-height: 3rem; }
+      .mp button.mp-meal:hover { border-color: var(--accent); }
+      .mp .mp-meal.is-empty { border-style: dashed; color: var(--muted); justify-content: center; }
+      .mp-name { font-weight: 650; overflow-wrap: anywhere; }
+      .mp-desc { font-size: .88rem; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+      .mp-note { font-size: .85rem; background: var(--mp-note); color: var(--mp-note-ink); border-radius: .3rem; padding: .15rem .4rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .mp-link { font-size: .85rem; color: var(--accent); overflow-wrap: anywhere; align-self: flex-start; }
+
+      @media (max-width: 560px) {
+        .mp-day { grid-template-columns: 3.2rem 1fr; }
+        .mp-day .mp-slot:last-child { grid-column: 2; }
+      }
+
+      .mp .mp-search { font-size: 1rem; padding: .55rem .7rem; margin-bottom: .5rem; }
+      .mp-empty { color: var(--muted); padding: 2rem 0; text-align: center; }
+      .mp .mp-more { display: block; margin: 1rem auto; background: none; color: var(--ink); border: 1px solid var(--line); border-radius: .6rem; padding: .5rem 1rem; }
+
+      .mp-dialog { border: 0; border-radius: 1rem; padding: 0; width: min(28rem, calc(100vw - 2rem)); background: var(--surface); color: var(--ink); }
+      .mp-dialog::backdrop { background: rgb(0 0 0 / .4); }
+      .mp-dialog form { padding: 1.2rem; gap: .8rem; }
+      .mp-dialog h2 { margin: 0; font-size: 1.1rem; }
+      .mp-dialog label { display: flex; flex-direction: column; gap: .25rem; font-size: .85rem; }
+      .mp-dialog input, .mp-dialog textarea { font-size: 1rem; padding: .55rem .7rem; border-radius: .5rem; background: var(--bg); resize: vertical; }
+      .mp-dialog textarea[name="note"] { background: var(--mp-note); color: var(--mp-note-ink); border-color: transparent; }
+      .mp-actions { display: flex; gap: .5rem; align-items: center; }
+      .mp-actions .mp-spacer { flex: 1; }
+      .mp .mp-actions button { border-radius: .5rem; padding: .5rem .9rem; border: 1px solid var(--line); background: none; color: var(--ink); }
+      .mp .mp-actions .mp-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+      .mp .mp-actions .mp-danger { color: var(--danger); border-color: transparent; padding-left: 0; }
+    </style>
+
+    <div class="mp">
+      <nav class="mp-tabs" role="tablist">
+        <button type="button" class="mp-tab" role="tab" id="mpTabPlan" aria-selected="true">Next two weeks</button>
+        <button type="button" class="mp-tab" role="tab" id="mpTabArchive" aria-selected="false">History</button>
+      </nav>
+
+      <section id="mpPlan" role="tabpanel" aria-labelledby="mpTabPlan"></section>
+
+      <section id="mpArchive" role="tabpanel" aria-labelledby="mpTabArchive" hidden>
+        <input id="mpSearch" class="mp-search" type="search" placeholder="Search past meals and notes">
+        <div id="mpArchiveList"></div>
+      </section>
+
+      <dialog id="mpDialog" class="mp-dialog">
+        <form method="dialog" id="mpForm">
+          <h2 id="mpDialogTitle"></h2>
+          <label>Meal
+            <input name="name" required list="mpPastMeals" autocomplete="off" placeholder="e.g. Lentil soup">
+          </label>
+          <datalist id="mpPastMeals"></datalist>
+          <label>Description (optional)
+            <textarea name="description" rows="2"></textarea>
+          </label>
+          <label>Link (optional)
+            <input name="link" type="text" inputmode="url" autocomplete="off" placeholder="https://">
+          </label>
+          <label>Something special? (optional)
+            <textarea name="note" rows="2" placeholder="e.g. Bob is out of town, no leftovers needed for tomorrow's lunchbox"></textarea>
+          </label>
+          <div class="mp-actions">
+            <button type="button" id="mpDelete" class="mp-danger">Remove meal</button>
+            <span class="mp-spacer"></span>
+            <button type="submit" value="cancel" formnovalidate>Cancel</button>
+            <button type="submit" value="save" class="mp-primary">Save meal</button>
+          </div>
+        </form>
+      </dialog>
+    </div>
+  </section>
+  <!-- ===== END YOUR APP ===== -->
+
+  <p class="error" id="errorOut" hidden></p>
+
+  <footer id="footer" hidden>
+    <div class="row">
+      <button class="quiet" id="refreshBtn">Refresh</button>
+      <button class="quiet" id="disconnectBtn">Disconnect</button>
+    </div>
+  </footer>
+</main>
+
+<script src="config.js"></script>
+<script src="dropbox-sync.js"></script>
+<script>
+// ─────────────────────────────────────────────────────────────────────────
+// Shared shell. You shouldn't need to edit this part.
+// It gives your app two things:
+//   renderApp(data)  – you write this; it's called whenever data is loaded
+//   save(data)       – call this to store new data in Dropbox
+// ─────────────────────────────────────────────────────────────────────────
+const sync = createDropboxSync({
+  appKey: SITE_CONFIG.dropboxAppKey,
+  filePath: SITE_CONFIG.dropboxFile,
+});
+const $ = (id) => document.getElementById(id);
+let currentData = null;
+
+function setStatus(text, state) { const s = $("status"); s.textContent = text; s.dataset.state = state; }
+function showError(msg) { const e = $("errorOut"); e.textContent = msg || ""; e.hidden = !msg; }
+function showConnected(on) {
+  $("connectView").hidden = on;
+  $("appView").hidden = !on;
+  $("footer").hidden = !on;
+  if (!on) setStatus("Not connected", "idle");
+}
+function handleFailure(e) {
+  if (e.code === "signed-out") { showConnected(false); return; }
+  setStatus(navigator.onLine ? "Sync failed" : "Offline", "error");
+  showError(navigator.onLine ? e.message : "You're offline. Connect to the internet to sync.");
+}
+
+async function refresh() {
+  setStatus("Syncing", "busy");
+  try {
+    currentData = await sync.read();
+    renderApp(currentData);
+    setStatus("In sync", "ok");
+    showError("");
+  } catch (e) { handleFailure(e); }
+}
+
+async function save(data) {
+  setStatus("Saving", "busy");
+  try {
+    await sync.write(data);
+    currentData = data;
+    renderApp(data);
+    setStatus("Saved", "ok");
+    showError("");
+    return true;
+  } catch (e) { handleFailure(e); return false; }
+}
+
+$("connectBtn").addEventListener("click", () => sync.connect().catch((e) => showError(e.message)));
+$("refreshBtn").addEventListener("click", refresh);
+$("disconnectBtn").addEventListener("click", () => { sync.disconnect(); showConnected(false); showError(""); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && sync.isConnected()) refresh(); });
+window.addEventListener("online", () => { if (sync.isConnected()) refresh(); });
+
+// Starts after the page (including your app script below) has loaded.
+window.addEventListener("DOMContentLoaded", async function start() {
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+  try { await sync.init(); }
+  catch (e) { showConnected(false); showError(e.message); return; }
+  if (sync.isConnected()) { showConnected(true); refresh(); }
+  else showConnected(false);
+});
+</script>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────
+// YOUR APP: two-week lunch and dinner planner with a history archive.
+//
+// Saved data looks like:
+// {
+//   plan:    { "2026-10-01": { lunch: {name, description, link, note}, dinner: {...} }, ... },
+//   archive: { "2026-09-30": { lunch: {...}, dinner: {...} }, ... }
+// }
+// Days before today move from plan to archive whenever the app loads,
+// at midnight while it's open, and when you come back to it after midnight.
+// ─────────────────────────────────────────────────────────────────────────
+const DAYS_AHEAD = 14;
+const SLOTS = [["lunch", "Lunch"], ["dinner", "Dinner"]];
+const ARCHIVE_PAGE = 30; // days of history shown before "Show more"
+
+let model = null;        // normalized copy of the data we're showing
+let busy = false;        // true while an edit is being saved
+let editing = null;      // { date, slot } of the meal in the dialog
+let archiveLimit = ARCHIVE_PAGE;
+let shownDay = todayKey();
+
+
+// ---------- dates ----------
+function dateKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function todayKey() { return dateKey(new Date()); }
+function keyToDate(k) { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d); }
+function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+function isoWeek(d) {
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+  return Math.ceil(((t - yearStart) / 86400000 + 1) / 7);
+}
+function weekday(d, style = "short") { return d.toLocaleDateString(undefined, { weekday: style }); }
+function monthDay(d) { return d.toLocaleDateString(undefined, { day: "numeric", month: "short" }); }
+
+// ---------- data ----------
+function normalize(data) {
+  const d = data && typeof data === "object" && !Array.isArray(data) ? JSON.parse(JSON.stringify(data)) : {};
+  if (!d.plan || typeof d.plan !== "object") d.plan = {};
+  if (!d.archive || typeof d.archive !== "object") d.archive = {};
+  return d;
+}
+
+// Moves every day before today from plan into archive. Returns true if anything moved.
+function archivePast(d) {
+  const today = todayKey();
+  let changed = false;
+  for (const key of Object.keys(d.plan)) {
+    if (key >= today) continue;
+    const day = d.plan[key];
+    if (day && (day.lunch || day.dinner)) d.archive[key] = { ...(d.archive[key] || {}), ...day };
+    delete d.plan[key];
+    changed = true;
+  }
+  return changed;
+}
+
+function cleanLink(raw) {
+  const s = (raw || "").trim();
+  if (!s) return "";
+  return /^[a-z][a-z0-9+.-]*:/i.test(s) ? s : "https://" + s;
+}
+function safeHref(link) { return /^https?:\/\//i.test(link) ? link : null; }
+function linkLabel(link) {
+  try { return new URL(link).hostname.replace(/^www\./, ""); } catch { return link; }
+}
+
+// Called by the template whenever data is loaded.
+function renderApp(data) {
+  const d = normalize(data);
+  if (archivePast(d) && !busy) {
+    Promise.resolve(save(d)).catch(() => {});
+  }
+  model = d;
+  draw();
+}
+
+// Fetch the latest data, apply a change, save it.
+// The shell's status pill and error line report how the save went.
+async function change(mutate) {
+  busy = true;
+  try {
+    await refresh();
+    const d = normalize(currentData);
+    archivePast(d);
+    mutate(d);
+    model = d;
+    draw();
+    const ok = await save(d);
+    if (!ok) { model = normalize(currentData); archivePast(model); draw(); } // show what's really in Dropbox
+  } finally {
+    busy = false;
+  }
+}
+
+// ---------- drawing ----------
+function el(tag, props = {}, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (v == null || v === false) continue;
+    if (k === "class") e.className = v;
+    else if (k === "dataset") Object.assign(e.dataset, v);
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v);
+  }
+  for (const c of children.flat()) if (c != null && c !== false) e.append(c);
+  return e;
+}
+
+function mealContent(meal) {
+  return [
+    el("span", { class: "mp-name" }, meal.name),
+    meal.description && el("span", { class: "mp-desc" }, meal.description),
+    meal.note && el("span", { class: "mp-note" }, meal.note),
+  ];
+}
+
+function mealLink(meal) {
+  const href = meal.link && safeHref(meal.link);
+  return href && el("a", { class: "mp-link", href, target: "_blank", rel: "noopener noreferrer" }, linkLabel(href));
+}
+
+function draw() {
+  if (!model) return;
+  shownDay = todayKey();
+  drawPlan();
+  drawArchive();
+  fillSuggestions();
+}
+
+function drawPlan() {
+  const box = $("mpPlan");
+  box.replaceChildren();
+  const today = keyToDate(todayKey());
+  let lastWeek = null;
+
+  for (let i = 0; i < DAYS_AHEAD; i++) {
+    const date = addDays(today, i);
+    const key = dateKey(date);
+    const week = isoWeek(date);
+    if (week !== lastWeek) {
+      box.append(el("h3", { class: "mp-week" }, `Week ${week}`));
+      lastWeek = week;
+    }
+    const dow = date.getDay();
+    const label = i === 0 ? "Today" : i === 1 ? "Tomorrow" : weekday(date);
+    const day = model.plan[key] || {};
+
+    box.append(el("div", {
+      class: ["mp-day", i === 0 && "is-today", (dow === 0 || dow === 6) && "is-weekend"].filter(Boolean).join(" "),
+    },
+      el("div", { class: "mp-date" }, el("b", {}, String(date.getDate())), el("span", {}, label)),
+      SLOTS.map(([slot, slotLabel]) => {
+        const meal = day[slot];
+        return el("div", { class: "mp-slot" },
+          el("span", { class: "mp-slot-label" }, slotLabel),
+          el("button", {
+            type: "button",
+            class: meal ? "mp-meal" : "mp-meal is-empty",
+            "aria-label": meal ? `Edit ${slotLabel.toLowerCase()}, ${weekday(date, "long")} ${monthDay(date)}` : null,
+            onclick: () => openEditor(key, slot),
+          }, meal ? mealContent(meal) : `Add ${slotLabel.toLowerCase()}`),
+          meal && mealLink(meal),
+        );
+      }),
+    ));
+  }
+}
+
+function drawArchive() {
+  const box = $("mpArchiveList");
+  box.replaceChildren();
+  const q = $("mpSearch").value.trim().toLowerCase();
+  const matches = (m) => m && [m.name, m.description, m.note].some((t) => (t || "").toLowerCase().includes(q));
+
+  const keys = Object.keys(model.archive).sort().reverse()
+    .filter((k) => !q || SLOTS.some(([s]) => matches(model.archive[k][s])));
+
+  if (!keys.length) {
+    box.append(el("p", { class: "mp-empty" },
+      q ? "No past meals match that search." : "Past meals appear here the day after they happen."));
+    return;
+  }
+
+  let lastWeek = null;
+  for (const key of keys.slice(0, archiveLimit)) {
+    const date = keyToDate(key);
+    const week = `Week ${isoWeek(date)}, ${date.getFullYear()}`;
+    if (week !== lastWeek) { box.append(el("h3", { class: "mp-week" }, week)); lastWeek = week; }
+    const day = model.archive[key];
+    box.append(el("div", { class: "mp-day" },
+      el("div", { class: "mp-date" }, el("b", {}, String(date.getDate())), el("span", {}, `${weekday(date)} ${date.toLocaleDateString(undefined, { month: "short" })}`)),
+      SLOTS.map(([slot, slotLabel]) => {
+        const meal = day[slot];
+        return el("div", { class: "mp-slot" },
+          el("span", { class: "mp-slot-label" }, slotLabel),
+          el("div", { class: meal ? "mp-meal" : "mp-meal is-empty" }, meal ? mealContent(meal) : "Nothing planned"),
+          meal && mealLink(meal),
+        );
+      }),
+    ));
+  }
+  if (keys.length > archiveLimit) {
+    box.append(el("button", {
+      type: "button", class: "mp-more",
+      onclick: () => { archiveLimit += ARCHIVE_PAGE; drawArchive(); },
+    }, "Show older meals"));
+  }
+}
+
+// Past meal names become suggestions; picking one fills in its description and link.
+let knownMeals = new Map();
+function fillSuggestions() {
+  knownMeals = new Map();
+  const all = [...Object.entries(model.plan), ...Object.entries(model.archive)].sort((a, b) => (a[0] < b[0] ? 1 : -1));
+  for (const [, day] of all) for (const [slot] of SLOTS) {
+    const m = day && day[slot];
+    if (m && m.name && !knownMeals.has(m.name.toLowerCase())) knownMeals.set(m.name.toLowerCase(), m);
+  }
+  $("mpPastMeals").replaceChildren(...[...knownMeals.values()].slice(0, 300).map((m) => el("option", { value: m.name })));
+}
+
+// ---------- editor ----------
+function openEditor(date, slot) {
+  editing = { date, slot };
+  const meal = (model.plan[date] || {})[slot];
+  const f = $("mpForm");
+  const d = keyToDate(date);
+  const slotLabel = SLOTS.find(([s]) => s === slot)[1];
+  $("mpDialogTitle").textContent = `${slotLabel}, ${weekday(d, "long")} ${monthDay(d)}`;
+  f.name.value = meal?.name || "";
+  f.description.value = meal?.description || "";
+  f.link.value = meal?.link || "";
+  f.note.value = meal?.note || "";
+  $("mpDelete").hidden = !meal;
+  $("mpDialog").showModal();
+  if (!meal) f.name.focus();
+}
+
+$("mpForm").name.addEventListener("change", (e) => {
+  const f = $("mpForm");
+  const past = knownMeals.get(e.target.value.trim().toLowerCase());
+  if (!past) return;
+  if (!f.description.value.trim() && past.description) f.description.value = past.description;
+  if (!f.link.value.trim() && past.link) f.link.value = past.link;
+});
+
+$("mpForm").addEventListener("submit", (e) => {
+  if (e.submitter?.value !== "save" || !editing) return;
+  const f = e.target;
+  const { date, slot } = editing;
+  const meal = {
+    name: f.name.value.trim(),
+    description: f.description.value.trim(),
+    link: cleanLink(f.link.value),
+    note: f.note.value.trim(),
+  };
+  if (!meal.name) { e.preventDefault(); f.name.focus(); return; }
+  change((d) => { d.plan[date] = { ...(d.plan[date] || {}), [slot]: meal }; });
+});
+
+$("mpDelete").addEventListener("click", () => {
+  if (!editing || !confirm("Remove this meal?")) return;
+  const { date, slot } = editing;
+  $("mpDialog").close();
+  change((d) => {
+    if (!d.plan[date]) return;
+    delete d.plan[date][slot];
+    if (!d.plan[date].lunch && !d.plan[date].dinner) delete d.plan[date];
+  });
+});
+
+// ---------- tabs and search ----------
+function showTab(which) {
+  const plan = which === "plan";
+  $("mpTabPlan").setAttribute("aria-selected", String(plan));
+  $("mpTabArchive").setAttribute("aria-selected", String(!plan));
+  $("mpPlan").hidden = !plan;
+  $("mpArchive").hidden = plan;
+}
+$("mpTabPlan").addEventListener("click", () => showTab("plan"));
+$("mpTabArchive").addEventListener("click", () => showTab("archive"));
+$("mpSearch").addEventListener("input", () => { archiveLimit = ARCHIVE_PAGE; if (model) drawArchive(); });
+
+// ---------- midnight rollover ----------
+async function checkNewDay() {
+  if (todayKey() === shownDay || !model) return;
+  try { await refresh(); } catch { /* offline */ }
+  renderApp(currentData ?? model);
+}
+function scheduleMidnight() {
+  const now = new Date();
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5);
+  setTimeout(async () => { await checkNewDay(); scheduleMidnight(); }, next - now);
+}
+scheduleMidnight();
+// Phones pause timers while asleep, so also check when the app comes back into view.
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkNewDay(); });
+window.addEventListener("focus", checkNewDay);
+</script>
+</body>
+</html>
