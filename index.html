@@ -130,6 +130,10 @@
       .mp button.mp-meal:hover { border-color: var(--accent); }
       .mp .mp-meal.is-empty { border-style: dashed; color: var(--muted); justify-content: center; }
       .mp-name { font-weight: 650; overflow-wrap: anywhere; }
+      .mp-unnamed { font-size: .85rem; color: var(--muted); font-style: italic; }
+      .mp-slot-label { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; }
+      .mp .mp-del { background: none; border: 0; padding: 0; color: var(--muted); font-size: .75rem; text-decoration: underline; text-underline-offset: .2em; }
+      .mp .mp-del:hover { color: var(--danger); }
       .mp-desc { font-size: .88rem; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
       .mp-note { font-size: .85rem; background: var(--mp-note); color: var(--mp-note-ink); border-radius: .3rem; padding: .15rem .4rem; white-space: pre-wrap; overflow-wrap: anywhere; }
       .mp-link { font-size: .85rem; color: var(--accent); overflow-wrap: anywhere; align-self: flex-start; }
@@ -173,8 +177,8 @@
       <dialog id="mpDialog" class="mp-dialog">
         <form method="dialog" id="mpForm">
           <h2 id="mpDialogTitle"></h2>
-          <label>Meal
-            <input name="name" required list="mpPastMeals" autocomplete="off" placeholder="e.g. Lentil soup">
+          <label>Meal (optional)
+            <input name="name" list="mpPastMeals" autocomplete="off" placeholder="e.g. Lentil soup">
           </label>
           <datalist id="mpPastMeals"></datalist>
           <label>Description (optional)
@@ -392,7 +396,7 @@ function el(tag, props = {}, ...children) {
 
 function mealContent(meal) {
   return [
-    el("span", { class: "mp-name" }, meal.name),
+    meal.name ? el("span", { class: "mp-name" }, meal.name) : el("span", { class: "mp-unnamed" }, "No meal chosen yet"),
     meal.description && el("span", { class: "mp-desc" }, meal.description),
     meal.note && el("span", { class: "mp-note" }, meal.note),
   ];
@@ -476,7 +480,12 @@ function drawArchive() {
       SLOTS.map(([slot, slotLabel]) => {
         const meal = day[slot];
         return el("div", { class: "mp-slot" },
-          el("span", { class: "mp-slot-label" }, slotLabel),
+          el("span", { class: "mp-slot-label" }, slotLabel,
+            meal && el("button", {
+              type: "button", class: "mp-del",
+              "aria-label": `Delete ${slotLabel.toLowerCase()} on ${weekday(date, "long")} ${monthDay(date)} from history`,
+              onclick: () => deleteArchived(key, slot),
+            }, "Delete")),
           el("div", { class: meal ? "mp-meal" : "mp-meal is-empty" }, meal ? mealContent(meal) : "Nothing planned"),
           meal && mealLink(meal),
         );
@@ -489,6 +498,16 @@ function drawArchive() {
       onclick: () => { archiveLimit += ARCHIVE_PAGE; drawArchive(); },
     }, "Show older meals"));
   }
+}
+
+function deleteArchived(key, slot) {
+  if (!confirm("Delete this from history?")) return;
+  change((d) => {
+    const day = d.archive[key];
+    if (!day) return;
+    delete day[slot];
+    if (!day.lunch && !day.dinner) delete d.archive[key];
+  });
 }
 
 // Past meal names become suggestions; picking one fills in its description and link.
@@ -538,8 +557,17 @@ $("mpForm").addEventListener("submit", (e) => {
     link: cleanLink(f.link.value),
     note: f.note.value.trim(),
   };
-  if (!meal.name) { e.preventDefault(); f.name.focus(); return; }
-  change((d) => { d.plan[date] = { ...(d.plan[date] || {}), [slot]: meal }; });
+  const empty = !meal.name && !meal.description && !meal.link && !meal.note;
+  if (empty && !(model.plan[date] || {})[slot]) return; // nothing to save
+  change((d) => {
+    if (empty) {
+      if (!d.plan[date]) return;
+      delete d.plan[date][slot];
+      if (!d.plan[date].lunch && !d.plan[date].dinner) delete d.plan[date];
+    } else {
+      d.plan[date] = { ...(d.plan[date] || {}), [slot]: meal };
+    }
+  });
 });
 
 $("mpDelete").addEventListener("click", () => {

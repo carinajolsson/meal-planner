@@ -1,7 +1,7 @@
 // Caches this site's files so it opens offline.
 // Bump VERSION whenever you change any file, so devices pick up the new version.
 // If you add new files (images, scripts), add them to FILES.
-const VERSION = "1";
+const VERSION = "2";
 const FILES = [
   "./",
   "./index.html",
